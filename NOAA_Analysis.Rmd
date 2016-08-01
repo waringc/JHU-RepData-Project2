@@ -1,0 +1,127 @@
+---
+title: "Severe weather event effects on human health and economic consquences 1950-2011"
+output: html_document
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+```
+
+##Synopsis
+This report seeks to answer in the United States which types of weather events are most harmful with respect to population health and economic costs? The data is based off the NOAA storm data set from 1950 to 2011.  Health cost is defined as the number of fatalities and injuries caused by an event.  Economic cost is defined as the property and crop damaged caused by an event.  For each weather event type the max economic and health cost was determined.  The top ten event types with the greatest max health cost and economic cost are reported.
+
+##Data Processing
+
+###Reading in the data
+We first read in data from the CSV file:
+```{r readcsv, cache=TRUE}
+noaa<-read.csv("repdata-data-StormData.csv.bz2", header = TRUE)
+```
+
+We next check the size of the data and the first few rows of the data set to ensure it has correctly loaded.
+```{r dimdata}
+dim(noaa)
+```
+
+```{r head}
+head(noaa)
+```
+
+We are interested in events that have adverse health (injuries or fatalities) or economic effects(property or crop damage).  We can subset the data to only include events that had reported health or economic effects:
+
+###Data Cleaning
+
+```{r subsetadverse}
+noaaAdverseHealth<-subset(noaa, FATALITIES > 0 | INJURIES > 0)
+noaaAdverseEcon<-subset(noaa, PROPDMG > 0 |CROPDMG>0)
+```
+
+For crop and property results there is a multiplier for the amount of damage.  They are: K- Thousands, M-millions, B-billions.  We should check these fields to ensure they are clean.
+
+```{r checkmultiplier}
+table(noaaAdverseEcon$PROPDMGEXP)
+table(noaaAdverseEcon$CROPDMGEXP)
+```
+
+
+A small number of fields don't have "K, M or B".  Since we don't know what these other values indicate and they are a small number of observations we will remove them.
+
+```{r cleanmultiplier}
+noaaAdverseEcon<-subset(noaaAdverseEcon, (PROPDMGEXP %in% c("","K", "M", "B"))&(CROPDMGEXP %in% c("","K", "M", "B")))
+
+##reapply factor
+noaaAdverseEcon$PROPDMGEXP<-factor(noaaAdverseEcon$PROPDMGEXP)
+noaaAdverseEcon$CROPDMGEXP<-factor(noaaAdverseEcon$CROPDMGEXP)
+```
+
+
+There is an error for a flood event in Napa Valley which lists damage as 115 billion.  This would skew results for incident with greatest economic impact.  This should be 115 million (as supported by event remarks).
+
+```{r napacorrect}
+noaaAdverseEcon$PROPDMGEXP[noaaAdverseEcon$REFNUM==605943]<-"M"
+```
+
+Finally we will convert the factors of the multipliers into numbers which can be used to convert the property and crop damage values into their full values.
+
+```{r convertexp}
+##reassign levels to numeric values
+levels(noaaAdverseEcon$PROPDMGEXP)<-c("0", "1000000000","1000","1000000")
+levels(noaaAdverseEcon$CROPDMGEXP)<-c("0", "1000000000","1000","1000000")
+
+```
+
+
+Multiply the property and crop damaged by their appropriate multipliers.
+```{r applymultiplier}
+noaaAdverseEcon$PROPDMG<-noaaAdverseEcon$PROPDMG*as.numeric(as.character(noaaAdverseEcon$PROPDMGEXP))
+noaaAdverseEcon$CROPDMG<-noaaAdverseEcon$CROPDMG*as.numeric(as.character(noaaAdverseEcon$CROPDMGEXP))
+```
+
+For economic analysis combine property and crop damage into a single field used to rank the events with the greatest overall economic damage.  For health analysis combine fatalities and injuries into a single field to rank the events with greatest overall health consequences.
+
+```{r sumelements}
+noaaAdverseEcon$TOTALDMG<-noaaAdverseEcon$PROPDMG+noaaAdverseEcon$CROPDMG
+
+noaaAdverseHealth$CASUALTIES<-noaaAdverseHealth$FATALITIES+noaaAdverseHealth$INJURIES
+```
+
+
+Create new data frames with max total economic damage and max total injuries and fatalities per event type.  Find the top ten events with the max economic damage and health cost.
+
+```{r aggregate}
+econEffects<-aggregate(noaaAdverseEcon$TOTALDMG, by=list(EVTYPE=noaaAdverseEcon$EVTYPE), FUN=max)
+
+econEffects<-econEffects[order(-econEffects$x),]
+colnames(econEffects)<-c("Event.Type", "Damage")
+
+##Convert damage to millions to make it easier to display
+econEffects$Damage<-((econEffects$Damage)/1000000)
+
+healthEffects<-aggregate(noaaAdverseHealth$CASUALTIES, by=list(EVTYPE=noaaAdverseHealth$EVTYPE), FUN=max)
+
+healthEffects<-healthEffects[order(-healthEffects$x),]
+colnames(healthEffects)<-c("Event.Type", "Casualties")
+
+```
+
+##Results
+
+###Greatest Health Effects
+
+The weather event types with the 10 greatest human health costs (injuries and fatalities) per event are summarized in the plot below:
+```{r healthgraph}
+ggplot(healthEffects[1:10,], aes(reorder(Event.Type, -Casualties), Casualties))+geom_bar(stat="identity", position="dodge")+theme(axis.text.x = element_text(angle = 90, hjust = 1,size=6))+xlab("Event Type")+ylab("Injuries/Fatalities per Event")+ggtitle("Top ten event types with the greatest combined injuries and fatalities")+geom_text(aes(label=as.character(Casualties),vjust=-0.25))
+```
+
+These events represent the greatest cost to human health.
+
+###Greatest Economic Effects
+
+The weather event types with the 10 greatest economic costs (property and crop damage) per event are summarized in the plot below:
+
+```{r econgraph}
+ggplot(econEffects[1:10,], aes(reorder(Event.Type,-Damage), Damage))+geom_bar(stat="identity", position="dodge")+theme(axis.text.x = element_text(angle = 90, hjust = 1,size=6))+xlab("Event Type")+ylab("Damage($Millions) per Event")+ggtitle("Top ten event types with greatest combined property and crop damage")+geom_text(aes(label=(as.integer(Damage)),vjust=-0.25))
+```
+
+These events represent the greatest economic costs.
